@@ -2,44 +2,52 @@ package main
 
 import (
 	"bufio"
+	"io"
 	"log"
 	"net"
 	"net/http"
+	"os"
 )
 
-func main() {
-	// Listen tcp on port 8080
-	if ln, err := net.Listen("tcp", ":8080"); err == nil {
-		// Loop: accept connections one by one
-		for {
-			// Accept tcp connection
-			if conn, err := ln.Accept(); err == nil {
-				// Read from connection
-				reader := bufio.NewReader(conn)
-				// Read HTTP
-				if req, err := http.ReadRequest(reader); err == nil {
-					// Connect to backend
-					if be, err := net.Dial("tcp", "127.0.0.1:8081"); err == nil {
-						// Read from the backend connection
-						be_reader := bufio.NewReader(be)
+func handleConnection(conn net.Conn) {
+	defer conn.Close()
+	reader := bufio.NewReader(conn)
 
-						// Write to the backend
-						if err := req.Write(be); err == nil {
-							// Read response from the backend
-							if resp, err := http.ReadResponse(be_reader, req); err == nil {
-								// Send the response to the client
-								resp.Close = true
-								if err := resp.Write(conn); err == nil {
-									log.Printf("%s: %d", req.URL.Path, resp.StatusCode)
-								}
-
-								conn.Close()
-								// Loop: accept next connection
-							}
-						}
-					}
+	// for {
+	req, err := http.ReadRequest(reader)
+	if err != nil {
+		if err != io.EOF {
+			log.Printf("Failed to read request: %s", err)
+		}
+		return
+	}
+	log.Println("Dialing")
+	if backendConn, err := net.Dial("tcp", "127.0.0.1:8081"); err == nil {
+		backend_reader := bufio.NewReader(backendConn)
+		log.Println("Writing to target server")
+		if err := req.Write(backendConn); err == nil {
+			log.Println("Reading response")
+			if resp, err := http.ReadResponse(backend_reader, req); err == nil {
+				resp.Close = true
+				log.Println("Writing response")
+				if err := resp.Write(conn); err == nil {
+					log.Printf("%s: %d", req.URL.Path, resp.StatusCode)
 				}
 			}
+		}
+	}
+	// }
+}
+
+func main() {
+	ln, err := net.Listen("tcp", ":"+os.Args[1])
+	if err != nil {
+		log.Fatalf("Failed to listen: %s", err)
+	}
+	for {
+		if conn, err := ln.Accept(); err == nil {
+			log.Print("Received connection: %v", conn)
+			go handleConnection(conn)
 		}
 	}
 }
