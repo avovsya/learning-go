@@ -15,6 +15,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/rpc"
 	"os"
 	"strconv"
 	"sync"
@@ -112,6 +113,14 @@ func handleConnection(conn net.Conn) {
 }
 
 func main() {
+	rpc.Register(&RpcServer{})
+	rpc.HandleHTTP()
+	l, err := net.Listen("tcp", ":8079")
+	if err != nil {
+		log.Fatalf("Failed to listen for RPC: %s", err)
+	}
+	go http.Serve(l, nil)
+
 	ln, err := net.Listen("tcp", ":"+os.Args[1])
 	if err != nil {
 		log.Fatalf("Failed to listen: %s", err)
