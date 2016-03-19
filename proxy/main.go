@@ -7,36 +7,52 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strconv"
+	"sync"
 )
+
+var requestBytes map[string]int64
+var requestLock sync.Mutex
+
+func init() {
+	requestBytes = make(map[string]int64)
+}
+
+func updateStats(req *http.Request, resp *http.Response) int64 {
+	requestLock.Lock()
+	defer requestLock.Unlock()
+
+	bytes := requestBytes[req.URL.Path] + resp.ContentLength
+	requestBytes[req.URL.Path] = bytes
+	return bytes
+}
 
 func handleConnection(conn net.Conn) {
 	defer conn.Close()
 	reader := bufio.NewReader(conn)
 
-	// for {
-	req, err := http.ReadRequest(reader)
-	if err != nil {
-		if err != io.EOF {
-			log.Printf("Failed to read request: %s", err)
+	for {
+		req, err := http.ReadRequest(reader)
+		if err != nil {
+			if err != io.EOF {
+				log.Printf("Failed to read request: %s", err)
+			}
+			return
 		}
-		return
-	}
-	log.Println("Dialing")
-	if backendConn, err := net.Dial("tcp", "127.0.0.1:8081"); err == nil {
-		backend_reader := bufio.NewReader(backendConn)
-		log.Println("Writing to target server")
-		if err := req.Write(backendConn); err == nil {
-			log.Println("Reading response")
-			if resp, err := http.ReadResponse(backend_reader, req); err == nil {
-				resp.Close = true
-				log.Println("Writing response")
-				if err := resp.Write(conn); err == nil {
-					log.Printf("%s: %d", req.URL.Path, resp.StatusCode)
+		if backendConn, err := net.Dial("tcp", "127.0.0.1:8081"); err == nil {
+			backend_reader := bufio.NewReader(backendConn)
+			if err := req.Write(backendConn); err == nil {
+				if resp, err := http.ReadResponse(backend_reader, req); err == nil {
+					bytes := updateStats(req, resp)
+					resp.Header.Set("X-Bytes", strconv.FormatInt(bytes, 10))
+					resp.Close = true
+					if err := resp.Write(conn); err == nil {
+						log.Printf("%s: %d, %d bytes", req.URL.Path, resp.StatusCode, requestBytes[req.URL.Path])
+					}
 				}
 			}
 		}
 	}
-	// }
 }
 
 func main() {
